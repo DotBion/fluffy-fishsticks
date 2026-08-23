@@ -20,7 +20,7 @@ dag = DAG(
     catchup=False
 )
 
-API_KEY = 'D4FOXZ3SY45T4YFI'
+API_KEY = os.environ.get("ALPHA_VANTAGE_API_KEY")
 SYMBOL = 'AAPL'
 TEMP_DIR = '/tmp/alpha_vantage'  # temp space inside the container
 FILENAME = f"{SYMBOL}_daily.csv"
@@ -29,6 +29,8 @@ TRANSFORMED_FILENAME = f"{SYMBOL}_daily_2018.csv"
 # ------------------- TASK FUNCTIONS ------------------- #
 
 def extract_stock_data():
+    if not API_KEY:
+        raise RuntimeError("ALPHA_VANTAGE_API_KEY is not set in the Airflow environment.")
     os.makedirs(TEMP_DIR, exist_ok=True)
     ts = TimeSeries(key=API_KEY, output_format='pandas')
     data, meta_data = ts.get_daily(symbol=SYMBOL, outputsize='full')
@@ -50,8 +52,8 @@ def transform_data():
 def load_to_minio():
     client = Minio(
         "minio:9000",  # or "localhost:9000" if accessed outside Docker
-        access_key="admin",
-        secret_key="admin123",
+        access_key=os.environ["MINIO_ROOT_USER"],
+        secret_key=os.environ["MINIO_ROOT_PASSWORD"],
         secure=False
     )
 

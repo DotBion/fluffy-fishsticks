@@ -169,3 +169,17 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# --- Secrets and local config (added during credential cleanup) ---
+.env
+.env.*
+!.env.example
+kaggle.json
+Data/Keys.txt
+*.pem
+*.key
+credentials.json
+service-account*.json
+
+# macOS
+.DS_Store
