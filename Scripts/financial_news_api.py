@@ -16,7 +16,7 @@ def save_data_to_file(data, filename):
     with open(filename, 'w', encoding='utf-8') as file:
         json.dump(data, file, indent=4)
 
-api_key = 'your_alpha_vantage_api_key'
+api_key = os.environ["ALPHA_VANTAGE_API_KEY"]
 output_dir = '../Data/NewsSentiment'
 os.makedirs(output_dir, exist_ok=True)
 

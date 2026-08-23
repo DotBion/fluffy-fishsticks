@@ -1,0 +1,25 @@
+
+=== BASELINE (no sentiment): 5 features, 5 seeds ===
+  seed 0: val_mse=0.009664  MAE=$6.80  RMSE=$8.38
+  seed 1: val_mse=0.013371  MAE=$8.19  RMSE=$9.86
+  seed 2: val_mse=0.011180  MAE=$7.41  RMSE=$9.01
+  seed 3: val_mse=0.007824  MAE=$6.14  RMSE=$7.54
+  seed 4: val_mse=0.012275  MAE=$7.82  RMSE=$9.44
+
+=== WITH SENTIMENT: 6 features, 5 seeds ===
+  seed 0: val_mse=0.008103  MAE=$6.17  RMSE=$7.67
+  seed 1: val_mse=0.012043  MAE=$7.78  RMSE=$9.35
+  seed 2: val_mse=0.009831  MAE=$6.87  RMSE=$8.45
+  seed 3: val_mse=0.014581  MAE=$8.67  RMSE=$10.29
+  seed 4: val_mse=0.006755  MAE=$5.71  RMSE=$7.01
+
+==================================================================
+RESULTS over 5 seeds (mean +/- std), n_val=49
+==================================================================
+metric                            baseline          with sentiment   delta
+val MSE (scaled)     0.010863 +/- 0.002182   0.010263 +/- 0.003122   -5.5%
+MAE ($)                      7.27 +/- 0.82           7.04 +/- 1.20   -3.2%
+RMSE ($)                     8.85 +/- 0.91           8.56 +/- 1.31   -3.3%
+
+Negative delta = sentiment helps. Spread overlap check: baseline [0.008680, 0.013045] vs sentiment [0.007141, 0.013384]
+WARNING: difference is smaller than one std — not a reliable effect at this sample size.

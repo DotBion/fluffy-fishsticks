@@ -21,7 +21,7 @@ def save_data_to_file(data, path, filename):
         json.dump(data, file, indent=4)  # Pretty print the JSON data
     print(f"Data saved to {file_path}")
 
-api_key_alpha = 'your_alpha_vantage_api_key'
+api_key_alpha = os.environ["ALPHA_VANTAGE_API_KEY"]
 stock_symbols = ['AMZN', 'GOOGL', 'MSFT', 'FB', 'TSLA', 'BRK.A', 'V', 'JNJ', 'WMT']
 path = '/tmp/data/stock'
 

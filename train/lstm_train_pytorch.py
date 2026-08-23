@@ -1,52 +1,37 @@
+"""Train the sentiment-aware LSTM on daily OHLCV + sentiment features.
+
+Run directly:  python lstm_train_pytorch.py
+Importing this module has no side effects.
+"""
 
 import os
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import MinMaxScaler
+from joblib import dump
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from torch.utils.data import DataLoader, Dataset
 
-# === Configurable Hyperparameters ===
+from models import DEFAULTS, FEATURE_COLS, TARGET_IDX, LSTMModel
+
 config = {
     "epochs": 20,
     "batch_size": 16,
     "lr": 1e-3,
-    "seq_length": 10,
-    "hidden_dim": 64,
-    "num_layers": 2,
-    "dropout": 0.2,
-    "device": "cuda" if torch.cuda.is_available() else "cpu"
+    "seq_length": DEFAULTS["seq_length"],
+    "hidden_dim": DEFAULTS["hidden_dim"],
+    "num_layers": DEFAULTS["num_layers"],
+    "dropout": DEFAULTS["dropout"],
+    "device": "cuda" if torch.cuda.is_available() else "cpu",
 }
 
-# === Data Loading ===
-data_path = os.getenv("DATA_CSV_PATH", "data_2018.csv")
-df = pd.read_csv(data_path)
-# df = df.rename(columns={
-#     'Unnamed: 0': 'date',
-#     'Average Score': 'daily_avg_sentiment_score'
-# })
-df = df.sort_values(by='date')
+MODEL_PATH = os.getenv("MODEL_PATH", "lstm_model.pth")
+SCALER_PATH = os.getenv("SCALER_PATH", "scaler.pkl")
 
-feature_cols = ["open", "high", "low", "close", "volume", "daily_avg_sentiment_score"]
-data = df[feature_cols].values
 
-scaler = MinMaxScaler()
-data_scaled = scaler.fit_transform(data)
-
-# === Create sequences ===
-def create_sequences(data, seq_length):
-    X, y = [], []
-    for i in range(len(data) - seq_length):
-        X.append(data[i:i + seq_length])
-        y.append(data[i + seq_length][3])  # predicting 'close' price
-    return np.array(X), np.array(y)
-
-X, y = create_sequences(data_scaled, config["seq_length"])
-X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, shuffle=False)
-
-# === Dataset Class ===
 class StockDataset(Dataset):
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
@@ -58,52 +43,81 @@ class StockDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
 
-train_loader = DataLoader(StockDataset(X_train, y_train), batch_size=config["batch_size"], shuffle=True)
-val_loader = DataLoader(StockDataset(X_val, y_val), batch_size=config["batch_size"], shuffle=False)
 
-# === Model ===
-class LSTMModel(nn.Module):
-    def __init__(self, input_size, hidden_dim, num_layers, dropout):
-        super(LSTMModel, self).__init__()
-        self.lstm = nn.LSTM(input_size, hidden_dim, num_layers, dropout=dropout, batch_first=True)
-        self.fc = nn.Linear(hidden_dim, 1)
+def create_sequences(data, seq_length):
+    """Sliding windows of `seq_length` rows predicting the next row's close."""
+    X, y = [], []
+    for i in range(len(data) - seq_length):
+        X.append(data[i:i + seq_length])
+        y.append(data[i + seq_length][TARGET_IDX])
+    return np.array(X), np.array(y)
 
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        out = self.fc(out[:, -1, :])
-        return out.squeeze()
 
-model = LSTMModel(input_size=len(feature_cols),
-                  hidden_dim=config["hidden_dim"],
-                  num_layers=config["num_layers"],
-                  dropout=config["dropout"]).to(config["device"])
+def load_data(data_path, feature_cols=FEATURE_COLS):
+    df = pd.read_csv(data_path).sort_values(by="date")
+    scaler = MinMaxScaler()
+    data_scaled = scaler.fit_transform(df[feature_cols].values)
+    return df, data_scaled, scaler
 
-criterion = nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"])
 
-# === Training ===
-for epoch in range(config["epochs"]):
-    model.train()
-    train_loss = 0
-    for X_batch, y_batch in train_loader:
-        X_batch, y_batch = X_batch.to(config["device"]), y_batch.to(config["device"])
-        optimizer.zero_grad()
-        output = model(X_batch)
-        loss = criterion(output, y_batch)
-        loss.backward()
-        optimizer.step()
-        train_loss += loss.item() * X_batch.size(0)
+def train(data_path=None, feature_cols=FEATURE_COLS, seed=None, verbose=True):
+    """Train one model. Returns (model, scaler, metrics)."""
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
 
-    model.eval()
-    val_loss = 0
-    with torch.no_grad():
-        for X_batch, y_batch in val_loader:
+    data_path = data_path or os.getenv("DATA_CSV_PATH", "data_2018.csv")
+    _, data_scaled, scaler = load_data(data_path, feature_cols)
+
+    X, y = create_sequences(data_scaled, config["seq_length"])
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+    train_loader = DataLoader(StockDataset(X_train, y_train), batch_size=config["batch_size"], shuffle=True)
+    val_loader = DataLoader(StockDataset(X_val, y_val), batch_size=config["batch_size"], shuffle=False)
+
+    model = LSTMModel(
+        input_size=len(feature_cols),
+        hidden_dim=config["hidden_dim"],
+        num_layers=config["num_layers"],
+        dropout=config["dropout"],
+    ).to(config["device"])
+
+    criterion = nn.MSELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"])
+
+    train_loss = val_loss = float("nan")
+    for epoch in range(config["epochs"]):
+        model.train()
+        running = 0.0
+        for X_batch, y_batch in train_loader:
             X_batch, y_batch = X_batch.to(config["device"]), y_batch.to(config["device"])
-            output = model(X_batch)
-            loss = criterion(output, y_batch)
-            val_loss += loss.item() * X_batch.size(0)
+            optimizer.zero_grad()
+            loss = criterion(model(X_batch), y_batch)
+            loss.backward()
+            optimizer.step()
+            running += loss.item() * X_batch.size(0)
+        train_loss = running / len(train_loader.dataset)
 
-    print(f"Epoch {epoch+1}/{config['epochs']} - Train Loss: {train_loss/len(train_loader.dataset):.4f} - Val Loss: {val_loss/len(val_loader.dataset):.4f}")
+        model.eval()
+        running = 0.0
+        with torch.no_grad():
+            for X_batch, y_batch in val_loader:
+                X_batch, y_batch = X_batch.to(config["device"]), y_batch.to(config["device"])
+                running += criterion(model(X_batch), y_batch).item() * X_batch.size(0)
+        val_loss = running / len(val_loader.dataset)
 
-# === Save the model ===
-torch.save(model.state_dict(), "lstm_model.pth")
+        if verbose:
+            print(f"Epoch {epoch + 1}/{config['epochs']} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
+
+    return model, scaler, {"train_mse": train_loss, "val_mse": val_loss}
+
+
+if __name__ == "__main__":
+    model, scaler, metrics = train()
+    torch.save(model.state_dict(), MODEL_PATH)
+    # The scaler is part of the model artifact: without it, served predictions
+    # come back in normalized [0, 1] space and cannot be mapped to prices.
+    dump(scaler, SCALER_PATH)
+    print(f"\nSaved model  -> {MODEL_PATH}")
+    print(f"Saved scaler -> {SCALER_PATH}")
+    print(f"Final metrics: {metrics}")

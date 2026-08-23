@@ -4,6 +4,7 @@ import pathlib
 import textwrap
 import google.generativeai as genai
 import requests
+import os
 # import news_api
 
 LSTM_API = "http://129.114.27.146:9090/predict"
@@ -11,7 +12,10 @@ FINBERT_API = "http://129.114.27.146:8080/predict"
 
 app = Flask(__name__)
 CORS(app)
-genai.configure(api_key='AIzaSyCjrt3G2Vt4Pu_BVupexsqYi1qB3HxnrJg')
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise RuntimeError("GEMINI_API_KEY is not set. Copy .env.example to .env and fill it in.")
+genai.configure(api_key=GEMINI_API_KEY)
 
 for m in genai.list_models():
   if 'generateContent' in m.supported_generation_methods:

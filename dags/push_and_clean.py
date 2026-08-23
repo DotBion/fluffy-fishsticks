@@ -19,8 +19,8 @@ dag = DAG(
 
 MINIO_CLIENT = Minio(
     "minio:9000",  # use "localhost:9000" if running outside Docker
-    access_key="admin",
-    secret_key="admin123",
+    access_key=os.environ.get("MINIO_ROOT_USER", ""),
+    secret_key=os.environ.get("MINIO_ROOT_PASSWORD", ""),
     secure=False
 )
 
