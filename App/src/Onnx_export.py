@@ -47,17 +47,29 @@ model_fp32 = "lstm_model.onnx"
 model_int8 = "lstm_model_int8.onnx"
 model_fp16 = "lstm_model_fp16.onnx"
 
-# INT8 quantization (weights only)
+# INT8 dynamic quantization (weights only)
 quantize_dynamic(
     model_fp32,
     model_int8,
-    weight_type=QuantType.QInt8
+    weight_type=QuantType.QInt8,
 )
 
-# FP16 quantization (better for GPU inference)
-quantize_dynamic(
-    model_fp32,
-    model_fp16,
-    weight_type=QuantType.QUInt8,  # QUInt8 produces FP16 weights
-)
+# FP16 conversion.
+# NOTE: quantize_dynamic cannot produce FP16 — it only emits int8/uint8
+# weights. A previous version passed QuantType.QUInt8 here and labelled the
+# result "fp16", which was simply a second uint8 model under a misleading
+# name. Real FP16 conversion goes through onnxconverter_common.
+try:
+    import onnx
+    from onnxconverter_common import float16
 
+    fp16_model = float16.convert_float_to_float16(onnx.load(model_fp32), keep_io_types=True)
+    onnx.save(fp16_model, model_fp16)
+    print(f"Wrote {model_fp16} (true FP16 weights, FP32 I/O)")
+except ImportError:
+    print(
+        "onnxconverter-common not installed; skipping FP16 export.\n"
+        "  pip install onnxconverter-common"
+    )
+
+print(f"Wrote {model_int8} (INT8 weights)")
