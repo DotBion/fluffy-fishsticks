@@ -5,10 +5,15 @@ import textwrap
 import google.generativeai as genai
 import requests
 import os
+import csv
 # import news_api
 
-LSTM_API = "http://129.114.27.146:9090/predict"
-FINBERT_API = "http://129.114.27.146:8080/predict"
+LSTM_API = os.getenv("LSTM_API", "http://localhost:9090/predict")
+FINBERT_API = os.getenv("FINBERT_API", "http://localhost:5001/predict")
+MARKET_CSV = os.getenv("MARKET_CSV", "../../train/data_2018.csv")
+TICKER_CSV = os.getenv("TICKER_CSV", "../../stocks_cleaned.csv")
+SEQ_LENGTH = 10
+FEATURE_COLS = ["open", "high", "low", "close", "volume", "daily_avg_sentiment_score"]
 
 app = Flask(__name__)
 CORS(app)
@@ -29,28 +34,86 @@ model = genai.GenerativeModel('gemini-1.5-pro')
 
 # print(response.text)
 
+def _load_tickers():
+    """Map lowercase company name and ticker -> ticker, from stocks_cleaned.csv."""
+    lookup = {}
+    try:
+        with open(TICKER_CSV, newline="", encoding="utf-8") as fh:
+            for row in csv.DictReader(fh):
+                ticker = (row.get("ticker") or "").strip()
+                name = (row.get(" name") or row.get("name") or "").strip()
+                if ticker:
+                    lookup[ticker.lower()] = ticker
+                    if name:
+                        lookup[name.lower()] = ticker
+    except FileNotFoundError:
+        app.logger.warning("Ticker list %s not found; company extraction degraded.", TICKER_CSV)
+    return lookup
+
+
+TICKERS = _load_tickers()
+
+
 def extract_company_name(query):
-    words = query.split()
-    for word in words:
-        if word.lower() in ["nvidia", "apple", "microsoft"]:
-            return word.upper()
+    """Resolve a ticker from free text against the full ticker list."""
+    lowered = query.lower()
+    # Longest names first so "Berkshire Hathaway" wins over "Berkshire".
+    for name in sorted(TICKERS, key=len, reverse=True):
+        if len(name) > 2 and name in lowered:
+            return TICKERS[name]
+    for word in query.split():
+        token = word.strip(".,!?$")
+        cleaned = token.lower()
+        if cleaned not in TICKERS:
+            continue
+        # Short tickers collide with ordinary words ("A" is Agilent), so a
+        # lowercase token must be long enough to be unambiguous; an uppercase
+        # token is taken as a deliberate ticker reference.
+        if token.isupper() or len(cleaned) >= 4:
+            return TICKERS[cleaned]
     return "UNKNOWN"
 
-def get_finbert_sentiment(company_name):
-    return {
-        "sentiment": "Positive",
-        "confidence": 0.85
-    }
-def get_lstm_prediction(company_name):
-    # Dummy LSTM input (shape must match [batch, seq_len, input_size])
-    dummy_input = {
-        "input": [[[1.2, 1.5, 1.1, 1.3, 10000, 0.2], [1.3, 1.6, 1.2, 1.4, 11000, 0.3]]]
-    }
+def get_finbert_sentiment(texts):
+    """Classify recent headlines/tweets via the FinBERT service."""
+    if not texts:
+        return {"error": "no text supplied for sentiment analysis"}
     try:
-        response = requests.post(LSTM_API, json=dummy_input)
-        return response.json()
+        resp = requests.post(FINBERT_API, json={"input": texts}, timeout=10)
+        resp.raise_for_status()
+        body = resp.json()
+        labels = body.get("predictions", [])
+        probs = body.get("probabilities", [])
+        return {
+            "sentiment": labels[0] if labels else None,
+            "confidence": max(probs[0]) if probs else None,
+            "per_text": labels,
+        }
     except Exception as e:
-        return {"error": f"LSTM API error: {str(e)}"}
+        return {"error": f"FinBERT API error: {e}"}
+def _latest_window():
+    """Most recent SEQ_LENGTH rows of OHLCV + sentiment, oldest first."""
+    try:
+        with open(MARKET_CSV, newline="", encoding="utf-8") as fh:
+            rows = sorted(csv.DictReader(fh), key=lambda r: r["date"])
+    except FileNotFoundError:
+        return None, f"Market data {MARKET_CSV} not found"
+    if len(rows) < SEQ_LENGTH:
+        return None, f"Need {SEQ_LENGTH} rows, found {len(rows)}"
+    window = [[float(r[c]) for c in FEATURE_COLS] for r in rows[-SEQ_LENGTH:]]
+    return window, None
+
+
+def get_lstm_prediction(company_name):
+    """Send a real market window to the LSTM service."""
+    window, err = _latest_window()
+    if err:
+        return {"error": err}
+    try:
+        resp = requests.post(LSTM_API, json={"input": [window]}, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        return {"error": f"LSTM API error: {e}"}
     
 def load_context_from_files(directory_path):
     context_data = ""
@@ -94,14 +157,12 @@ def call_gemini_llm_api(input, query, context):
     Answer in precise terms, provide concrete analysis based on these parameters. The advice should be easy to understand and include reasoning derived from the context. DO NOT give financial risk warning. Include numbers as possible.
     """
 
-    #response = model.generate_content(prompt_template)
-    return prompt_template
-    
-    # q=f"You are financial insight generatiohn assistant, give a query by the user output, financial advice and provide your reasoning {context} Given this context use this to answer the following query: {query}. Answer in precise terms, give concrete 4-5 parameters, the advcie should be easy to understand, state reasonings derived from the context"
-    # response = model.generate_content(q)
-    
-    # Should I invest in NVIDIA right now?
-    return {"response": (format_paragraphs("{}".format(response.text)))}
+    try:
+        response = model.generate_content(prompt_template)
+    except Exception as e:
+        return {"error": f"Gemini API error: {e}"}
+
+    return {"response": format_paragraphs(response.text)}
 
 
 
@@ -115,19 +176,35 @@ def index():
 
 @app.route('/api/query', methods=['POST'])
 def handle_query():
-    data = request.json
-    query = data['query']
+    data = request.json or {}
+    query = (data.get("query") or "").strip()
+    if not query:
+        return jsonify({"error": "Missing 'query'"}), 400
+
     company_name = extract_company_name(query)
+
+    # Sentiment over any supplied headlines, falling back to the query itself.
+    texts = data.get("texts") or [query]
+    sentiment = get_finbert_sentiment(texts)
     lstm_output = get_lstm_prediction(company_name)
-    sentiment_score = get_finbert_sentiment(company_name)
-    response = "Company Name: " + company_name + " LSTM Output: " + str(lstm_output) + "Sentiment Score:" + str(sentiment_score)
-    # Load context from a predefined directory
-    #context = load_context_from_files(r'App/Data/News')
-    context = ''
-    response = call_gemini_llm_api(response, query, context)
-    print(response)
-    #return jsonify(response)
-    return jsonify({"response": response})
+
+    signals = (
+        f"Company: {company_name}\n"
+        f"LSTM next-day close prediction: {lstm_output}\n"
+        f"Sentiment: {sentiment}"
+    )
+
+    result = call_gemini_llm_api(signals, query, context="")
+    if "error" in result:
+        return jsonify(result), 502
+
+    return jsonify({
+        "response": result["response"],
+        "company": company_name,
+        "lstm": lstm_output,
+        "sentiment": sentiment,
+    })
+
 
 @app.route('/api/com_name', methods=['POST'])
 def get_comp_name():
