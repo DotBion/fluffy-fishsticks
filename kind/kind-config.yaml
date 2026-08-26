@@ -1,0 +1,49 @@
+# Local Kubernetes for testing the FinPulse CD path end to end.
+#
+# Chameleon (Terraform/kvm) remains the production target; this exists so the
+# Argo Workflows and ArgoCD flow can actually be exercised on a laptop rather
+# than only static-validated.
+#
+# Three nodes mirror the Chameleon topology (1 control-plane + 2 workers) so
+# scheduling behaviour is comparable.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: finpulse
+
+containerdConfigPatches:
+  # Point containerd at the local registry started by scripts/kind-up.sh.
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5001"]
+      endpoint = ["http://kind-registry:5000"]
+
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      # ArgoCD UI
+      - containerPort: 30080
+        hostPort: 8080
+        protocol: TCP
+      # Argo Workflows UI
+      - containerPort: 30081
+        hostPort: 2746
+        protocol: TCP
+      # MLflow
+      - containerPort: 30082
+        hostPort: 5000
+        protocol: TCP
+      # MinIO console
+      - containerPort: 30083
+        hostPort: 9001
+        protocol: TCP
+      # finpulse-app (staging)
+      - containerPort: 30084
+        hostPort: 8000
+        protocol: TCP
+  - role: worker
+  - role: worker

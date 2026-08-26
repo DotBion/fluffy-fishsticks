@@ -1,0 +1,24 @@
+# Helm overrides for the local kind cluster.
+#
+#   helm upgrade --install finpulse-platform k8s/platform \
+#     -n finpulse-platform -f kind/values-kind.yaml
+#
+# kind has no external IP to bind, so services are exposed as NodePorts that
+# kind/kind-config.yaml maps onto localhost. Chameleon keeps the default
+# ClusterIP + externalIPs path.
+serviceType: NodePort
+
+minio:
+  consoleNodePort: 30083
+
+mlflow:
+  nodePort: 30082
+
+service:
+  nodePort: 30084
+
+image:
+  repository: localhost:5001/finpulse-app
+  tag: dev
+
+backend: torch
