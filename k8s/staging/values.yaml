@@ -1,10 +1,16 @@
 replicaCount: 1
 
+# torch | onnx — selects the inference path at runtime
+backend: "torch"
+
 image:
   repository: registry.kube-system.svc.cluster.local:5000/finpulse-app
   tag: staging-1.0.0
 
+serviceType: ClusterIP
+
 service:
+  nodePort: 30084
   port: 8081
   externalIP: ""   # Placeholder
 

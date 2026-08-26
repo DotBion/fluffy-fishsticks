@@ -14,11 +14,31 @@ spec:
       labels:
         app: mlflow
     spec:
+      initContainers:
+        # MLflow exits if Postgres is not accepting connections yet, and with
+        # no ordering it crashloops until backoff outlasts helm --wait.
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z postgres 5432; do
+                echo "waiting for postgres:5432"
+                sleep 3
+              done
       containers:
         - name: mlflow
           image: ghcr.io/mlflow/mlflow:v2.20.2
           ports:
             - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 30
           env:
             - name: MLFLOW_TRACKING_URI
               value: http://0.0.0.0:8000
@@ -47,10 +67,16 @@ metadata:
   name: mlflow
   namespace: finpulse-platform
 spec:
+  type: {{ .Values.serviceType }}
   selector:
     app: mlflow
   ports:
     - port: 8000
       targetPort: 8000
+      {{- if eq .Values.serviceType "NodePort" }}
+      nodePort: {{ .Values.mlflow.nodePort }}
+      {{- end }}
+  {{- if eq .Values.serviceType "ClusterIP" }}
   externalIPs:
     - {{ .Values.mlflow.externalIP }}
+  {{- end }}

@@ -19,6 +19,19 @@ spec:
           image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
           ports:
             - containerPort: 8000
+          env:
+            - name: BACKEND
+              value: {{ .Values.backend | quote }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
 ---
@@ -29,11 +42,17 @@ metadata:
   name: finpulse-app
   namespace: finpulse-production
 spec:
+  type: {{ .Values.serviceType }}
   selector:
     app: finpulse-app
   ports:
     - port: {{ .Values.service.port }}
       targetPort: 8000
+      {{- if eq .Values.serviceType "NodePort" }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
+  {{- if eq .Values.serviceType "ClusterIP" }}
   externalIPs:
     - {{ .Values.service.externalIP }}
+  {{- end }}
 

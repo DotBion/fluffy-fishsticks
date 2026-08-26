@@ -58,6 +58,7 @@ metadata:
   name: minio
   namespace: finpulse-platform
 spec:
+  type: {{ .Values.serviceType }}
   selector:
     app: minio
   ports:
@@ -67,8 +68,13 @@ spec:
     - name: console
       port: 9001
       targetPort: 9001
+      {{- if eq .Values.serviceType "NodePort" }}
+      nodePort: {{ .Values.minio.consoleNodePort }}
+      {{- end }}
+  {{- if eq .Values.serviceType "ClusterIP" }}
   externalIPs:
     - {{ .Values.minio.externalIP }}
+  {{- end }}
 ---
 apiVersion: batch/v1
 kind: Job

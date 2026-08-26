@@ -5,15 +5,19 @@ import textwrap
 import google.generativeai as genai
 import requests
 import os
+import sys
 import csv
 # import news_api
 
-LSTM_API = os.getenv("LSTM_API", "http://localhost:9090/predict")
-FINBERT_API = os.getenv("FINBERT_API", "http://localhost:5001/predict")
+LSTM_API = os.getenv("LSTM_API", "http://localhost:8000/predict")
+FINBERT_API = os.getenv("FINBERT_API", "http://localhost:8001/predict")
 MARKET_CSV = os.getenv("MARKET_CSV", "../../train/data_2018.csv")
 TICKER_CSV = os.getenv("TICKER_CSV", "../../stocks_cleaned.csv")
-SEQ_LENGTH = 10
-FEATURE_COLS = ["open", "high", "low", "close", "volume", "daily_avg_sentiment_score"]
+
+# Feature order and window length come from the serving contract so the
+# orchestrator cannot drift from what the model was trained on.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+from serving.contract import FEATURE_COLS, SEQ_LENGTH  # noqa: E402
 
 app = Flask(__name__)
 CORS(app)
