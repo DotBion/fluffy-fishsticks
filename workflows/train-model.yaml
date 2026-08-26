@@ -64,27 +64,40 @@ spec:
           exit 1
         fi
 
-        # Trigger model training
+        # Kick off training, then poll until it finishes. A single blocking
+        # request would hold the connection for the whole run and time out;
+        # the service starts a background run and reports progress on /status.
+        ENDPOINT="http://{{inputs.parameters.endpoint-ip}}:9090"
+
         echo "[INFO] Triggering model training..." >&2
-        RESPONSE=$(curl -f -s -X POST http://{{inputs.parameters.endpoint-ip}}:9090/trigger-training)
-        CURL_EXIT_CODE=$?
+        curl -f -s -X POST "$ENDPOINT/trigger-training" >&2 || {
+          echo "[ERROR] Could not reach $ENDPOINT/trigger-training" >&2; exit 1;
+        }
 
-        echo "[INFO] Training endpoint response was: $RESPONSE" >&2
-
-
-        if [ $CURL_EXIT_CODE -ne 0 ]; then
-          echo "[ERROR] curl failed with code $CURL_EXIT_CODE" >&2
-          exit $CURL_EXIT_CODE
-        fi
-
-        # Extract model version
-        VERSION=$(echo "$RESPONSE" | jq -r '.new_model_version // empty')
+        MAX_WAIT=${MAX_WAIT:-3600}
+        WAITED=0
+        while [ $WAITED -lt $MAX_WAIT ]; do
+          STATUS=$(curl -f -s "$ENDPOINT/status" || echo '{}')
+          RUNNING=$(echo "$STATUS" | jq -r '.running // false')
+          if [ "$RUNNING" != "true" ]; then
+            ERR=$(echo "$STATUS" | jq -r '.last_error // empty')
+            if [ -n "$ERR" ]; then
+              echo "[ERROR] Training failed: $ERR" >&2; exit 1
+            fi
+            VERSION=$(echo "$STATUS" | jq -r '.last_version // empty')
+            break
+          fi
+          sleep 15
+          WAITED=$((WAITED + 15))
+          echo "[INFO] still training (${WAITED}s)..." >&2
+        done
 
         if [ -z "$VERSION" ]; then
-          echo "[WARN] 'new_model_version' not found in response." >&2
+          echo "[ERROR] No model version after ${WAITED}s." >&2
           exit 1
         fi
 
+        echo "[INFO] Registered model version: $VERSION" >&2
         echo -n "$VERSION"
 
   - name: trigger-build

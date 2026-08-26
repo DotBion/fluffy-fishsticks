@@ -60,7 +60,7 @@ spec:
 
           while [ $i -le $MAX_RETRIES ]; do
             echo "Attempt $i of $MAX_RETRIES: Cloning repo..."
-            git clone --branch workflow https://github.com/teaching-on-testbeds/gourmetgram.git /mnt/workspace && break
+            git clone --branch main https://github.com/DotBion/fluffy-fishsticks.git /mnt/workspace && break
             echo "Git clone failed. Retrying in 5 seconds..."
             i=$((i + 1))
             sleep 5
@@ -84,23 +84,30 @@ spec:
       args:
         - |
           pip install mlflow-skinny
-          export MLFLOW_TRACKING_URI=http://mlflow.gourmetgram-platform.svc.cluster.local:8000
-          mkdir -p /tmp/mlflow_model
+          export MLFLOW_TRACKING_URI=http://mlflow.finpulse-platform.svc.cluster.local:8000
 
-          echo "Downloading MLflow model artifacts..."
-          mlflow artifacts download \
-            --artifact-uri models:/GourmetGramFood11Model/{{inputs.parameters.model-version}} \
-            -d /tmp/mlflow_model || { echo "MLflow download failed"; exit 1; }
+          # The registered model serializes to data/model.pt2 - a traced graph
+          # the inference server cannot load, since it calls load_state_dict.
+          # Training also logs the raw state_dict and the fitted scaler as run
+          # artifacts, so resolve the version to its run and pull those two.
+          # Both are required: serving with a scaler that does not match the
+          # weights yields silently wrong prices.
+          python - <<'PYEOF'
+          import mlflow, shutil
+          from mlflow import MlflowClient
 
-          echo "Searching for model.pth..."
-          FOUND=$(find /tmp/mlflow_model/data -name model.pth | head -n 1)
-          if [ -z "$FOUND" ]; then
-            echo "ERROR: model.pth not found in MLflow artifacts"; exit 1
-          fi
+          version = "{{inputs.parameters.model-version}}"
+          client = MlflowClient()
+          mv = client.get_model_version("FinPulseLSTM", version)
+          print(f"FinPulseLSTM v{version} -> run {mv.run_id}")
 
-          echo "Copying model.pth to app/ as food11.pth..."
-          cp "$FOUND" /mnt/workspace/food11.pth
-          echo "1.0.{{inputs.parameters.model-version}}" > /mnt/workspace/versions.txt
+          for name in ("lstm_model.pth", "scaler.pkl"):
+              path = mlflow.artifacts.download_artifacts(
+                  run_id=mv.run_id, artifact_path=name
+              )
+              shutil.copy(path, f"/mnt/workspace/train/{name}")
+              print(f"fetched {name}")
+          PYEOF
       volumeMounts:
       - name: workdir
         mountPath: /mnt/workspace
@@ -117,7 +124,8 @@ spec:
       args:
         - --dockerfile=/mnt/workspace/Dockerfile
         - --context=/mnt/workspace
-        - --destination=registry.kube-system.svc.cluster.local:5000/gourmetgram-app:staging-1.0.{{inputs.parameters.model-version}}
+        - --build-arg=MODEL_VERSION=1.0.{{inputs.parameters.model-version}}
+        - --destination=registry.kube-system.svc.cluster.local:5000/finpulse-app:staging-1.0.{{inputs.parameters.model-version}}
         - --insecure
       volumeMounts:
       - name: workdir
@@ -132,8 +140,8 @@ spec:
       command: [sh, -c]
       source: |
         pip install mlflow-skinny > /dev/null
-        export MLFLOW_TRACKING_URI=http://mlflow.gourmetgram-platform.svc.cluster.local:8000
-        python -c "import mlflow; client = mlflow.tracking.MlflowClient(); client.set_registered_model_alias(name='GourmetGramFood11Model', alias='staging', version='{{inputs.parameters.model-version}}')"
+        export MLFLOW_TRACKING_URI=http://mlflow.finpulse-platform.svc.cluster.local:8000
+        python -c "import mlflow; client = mlflow.tracking.MlflowClient(); client.set_registered_model_alias(name='FinPulseLSTM', alias='staging', version='{{inputs.parameters.model-version}}')"
   
   - name: trigger-deploy
     inputs:
