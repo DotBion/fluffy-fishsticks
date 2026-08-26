@@ -1,4 +1,5 @@
+# Installed into the Airflow containers at startup (see docker-compose.yml).
 alpha_vantage
 pandas
 minio
-
+nltk

@@ -68,3 +68,27 @@ dataset size.
 Reducing the uncertainty needs more data, not more seeds: 251 rows of one
 ticker for one year yields ~49 held-out points. Extending to multiple tickers
 and several years is the meaningful next step.
+
+## Data source
+
+Training resolves its dataset in this order:
+
+1. **MinIO** — when `MINIO_BUCKET`, `MINIO_TRAINING_OBJECT` and `MINIO_ENDPOINT`
+   are set, it downloads the object the Airflow DAG (`stock_sentiment_etl`)
+   produced. This is the wired-up path: the pipeline's output is what trains.
+2. **Local CSV** — `DATA_CSV_PATH`, defaulting to `data_2018.csv`, so a fresh
+   clone can train with no infrastructure running.
+
+The resolved source is printed at startup and recorded as the `data_source`
+param on the MLflow run.
+
+## Experiment tracking
+
+Set `MLFLOW_TRACKING_URI` to log params, metrics, the scaler artifact, and the
+model, registered as `FinPulseLSTM` (override with `MLFLOW_MODEL_NAME`):
+
+    MLFLOW_TRACKING_URI=sqlite:///mlflow.db python lstm_train_pytorch.py
+
+Unset, training runs normally and skips tracking. Note MLflow 3.x rejects
+filesystem stores (`file://./mlruns`) by default — use SQLite or the Postgres
+backend the compose stack provides.
