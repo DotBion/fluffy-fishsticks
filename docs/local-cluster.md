@@ -27,6 +27,32 @@ running — a Docker CLI on PATH does not mean the daemon is up. With colima:
 8 GB is not excessive: kind plus ArgoCD, Argo Workflows, MLflow, MinIO and
 Postgres will not fit comfortably in less.
 
+**Host memory matters as much as VM memory.** If macOS is already swapping
+heavily (check Activity Monitor -> Memory -> Swap Used), the colima VM gets
+starved no matter what you allocated, and the symptom is confusing:
+
+    Error from server (Timeout): error when retrieving current configuration of:
+    ... the server was unable to return a response in the time allotted
+
+That is the Kubernetes API server too slow to answer, not a manifest problem.
+
+A different failure mode looks like corruption but is usually capacity:
+
+    Error response from daemon: cannot remove container "finpulse-control-plane":
+    write /var/lib/containerd/io.containerd.metadata.v1.bolt/meta.db: input/output error
+
+This looks like disk corruption and usually is not. Check host memory first:
+heavy macOS swapping makes writes to the VM's virtual disk time out, and this
+has been observed on a VM disk only 7% full. Restarting colima normally clears
+it.
+
+Check `docker system df` too - a *negative* reclaimable size means containerd's
+metadata accounting is inconsistent. Only if the disk is genuinely near full
+does `docker system prune -af --volumes` help, and rebuilding the VM with
+`colima delete` is a last resort that costs you every cached image.
+Close browsers and editors before bringing the cluster up. `kind-up.sh` warns
+when the Docker VM reports under 6 GiB, but it cannot see host swap.
+
 ## A note for macOS
 
 macOS filesystems are case-insensitive but git is not. This repo keeps a

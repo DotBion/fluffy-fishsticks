@@ -4,8 +4,10 @@
 # Argo Workflows and ArgoCD flow can actually be exercised on a laptop rather
 # than only static-validated.
 #
-# Three nodes mirror the Chameleon topology (1 control-plane + 2 workers) so
-# scheduling behaviour is comparable.
+# One control-plane + one worker. Chameleon runs three nodes, but each kind
+# node is a full container running kubelet and containerd: three of them
+# inside an 8 GB VM starves the API server badly enough that kubectl times
+# out. Add workers here if you have headroom - the manifests do not care.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: finpulse
@@ -45,5 +47,4 @@ nodes:
       - containerPort: 30084
         hostPort: 8000
         protocol: TCP
-  - role: worker
   - role: worker
