@@ -43,10 +43,26 @@ serve-onnx: ## Serve locally with the ONNX backend (:8000)
 	BACKEND=onnx ONNX_MODEL_PATH=App/src/lstm_model.onnx SCALER_PATH=train/scaler.pkl \
 	  python -m serving.app
 
+# --- preflight -------------------------------------------------------------
+
+.PHONY: preflight
+preflight: ## Check that the cluster toolchain is installed and running
+	@missing=0; \
+	for t in docker kind kubectl helm; do \
+	  if command -v $$t >/dev/null 2>&1; then echo "  ok      $$t"; \
+	  else echo "  MISSING $$t"; missing=1; fi; done; \
+	if command -v docker >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then \
+	  echo "  DOWN    docker daemon — start Docker Desktop, or 'colima start --cpu 4 --memory 8'"; \
+	  missing=1; fi; \
+	if [ $$missing -ne 0 ]; then \
+	  echo ""; echo "Install what's missing: brew install kind kubectl helm"; \
+	  echo "See docs/local-cluster.md"; exit 1; fi; \
+	echo "  toolchain ready"
+
 # --- container ------------------------------------------------------------
 
 .PHONY: image
-image: ## Build the serving image
+image: preflight ## Build the serving image
 	docker build -t $(IMAGE):$(TAG) --build-arg MODEL_VERSION=$(TAG) .
 
 .PHONY: image-push
@@ -56,7 +72,7 @@ image-push: image ## Push to the local kind registry
 # --- kind cluster ---------------------------------------------------------
 
 .PHONY: cluster-up
-cluster-up: ## Create the kind cluster with ArgoCD, Argo Workflows, MLflow, MinIO
+cluster-up: preflight ## Create the kind cluster with ArgoCD, Argo Workflows, MLflow, MinIO
 	./scripts/kind-up.sh
 
 .PHONY: cluster-down
@@ -64,18 +80,18 @@ cluster-down: ## Delete the kind cluster (keeps the registry)
 	./scripts/kind-down.sh
 
 .PHONY: workflows
-workflows: ## Install the Argo WorkflowTemplates
+workflows: preflight ## Install the Argo WorkflowTemplates
 	kubectl apply -n argo -f workflows/
 
 .PHONY: deploy-staging
-deploy-staging: ## Deploy the staging chart to the cluster
+deploy-staging: preflight ## Deploy the staging chart to the cluster
 	kubectl create namespace finpulse-staging --dry-run=client -o yaml | kubectl apply -f -
 	helm upgrade --install finpulse-staging k8s/staging \
 	  --namespace finpulse-staging -f kind/values-kind.yaml \
 	  --set image.repository=$(IMAGE) --set image.tag=$(TAG) --wait
 
 .PHONY: smoke
-smoke: ## Verify the deployed service returns a real prediction
+smoke: preflight ## Verify the deployed service returns a real prediction
 	./scripts/smoke-test.sh
 
 # --- validation (no cluster required) -------------------------------------

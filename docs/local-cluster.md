@@ -8,10 +8,35 @@ exercised rather than only statically validated.
 
 | tool | install |
 | --- | --- |
-| Docker | https://docs.docker.com/get-docker/ |
-| kind | `go install sigs.k8s.io/kind@v0.23.0` or `brew install kind` |
+| Docker | Docker Desktop, or `brew install colima docker` |
+| kind | `brew install kind` |
 | kubectl | `brew install kubectl` |
 | helm | `brew install helm` |
+
+    brew install kind kubectl helm
+
+Check everything at once:
+
+    make preflight
+
+It reports each missing tool and whether the Docker daemon is actually
+running — a Docker CLI on PATH does not mean the daemon is up. With colima:
+
+    colima start --cpus 4 --memory 8
+
+8 GB is not excessive: kind plus ArgoCD, Argo Workflows, MLflow, MinIO and
+Postgres will not fit comfortably in less.
+
+## A note for macOS
+
+macOS filesystems are case-insensitive but git is not. This repo keeps a
+single lowercase `scripts/` directory for exactly that reason - an earlier
+`Scripts/` (capital S) meant files extracted into `scripts/` were committed
+under the other spelling and broke on Linux while appearing fine locally.
+
+Do not paste shell comments onto a command line in zsh: `INTERACTIVE_COMMENTS`
+is off by default in interactive zsh, so `cmd --flag 4  # note` passes the
+comment as arguments.
 
 ## Bring it up
 
