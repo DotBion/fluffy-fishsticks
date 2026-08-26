@@ -47,16 +47,20 @@ serve-onnx: ## Serve locally with the ONNX backend (:8000)
 
 .PHONY: preflight
 preflight: ## Check that the cluster toolchain is installed and running
-	@missing=0; \
+	@missing=0; daemon_down=0; \
 	for t in docker kind kubectl helm; do \
 	  if command -v $$t >/dev/null 2>&1; then echo "  ok      $$t"; \
 	  else echo "  MISSING $$t"; missing=1; fi; done; \
 	if command -v docker >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then \
-	  echo "  DOWN    docker daemon — start Docker Desktop, or 'colima start --cpu 4 --memory 8'"; \
-	  missing=1; fi; \
+	  echo "  DOWN    docker daemon"; daemon_down=1; fi; \
 	if [ $$missing -ne 0 ]; then \
-	  echo ""; echo "Install what's missing: brew install kind kubectl helm"; \
-	  echo "See docs/local-cluster.md"; exit 1; fi; \
+	  echo ""; echo "Install the missing tools:  brew install kind kubectl helm"; fi; \
+	if [ $$daemon_down -ne 0 ]; then \
+	  echo ""; echo "Start the Docker daemon:"; \
+	  echo "    colima start --cpus 4 --memory 8      # note --cpus, not --cpu"; \
+	  echo "    (or launch Docker Desktop)"; fi; \
+	if [ $$missing -ne 0 ] || [ $$daemon_down -ne 0 ]; then \
+	  echo ""; echo "See docs/RUNBOOK.md"; exit 1; fi; \
 	echo "  toolchain ready"
 
 # --- container ------------------------------------------------------------

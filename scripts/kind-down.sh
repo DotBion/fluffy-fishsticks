@@ -25,11 +25,13 @@ if ! kind delete cluster --name "$CLUSTER"; then
 
 Containers could not be removed. Check, in this order:
 
-  1. Host memory. If macOS is swapping heavily, writes to the VM's virtual
-     disk can time out and surface as I/O errors. Close memory-heavy apps,
-     then: colima stop && colima start --cpus 4 --memory 8
+  1. Host disk. The VM's disk is a sparse file on the host; when the host
+     fills, writes inside the VM fail with I/O errors even though the guest
+     reports free space:
+         df -h /
+         du -sh ~/.colima ~/Library/Caches 2>/dev/null
 
-  2. VM disk, only if it is actually near full:
+  2. VM disk, which is usually NOT the problem:
          colima ssh -- df -h /var/lib
          docker system df        # a NEGATIVE reclaimable size means the
                                  # containerd metadata is inconsistent

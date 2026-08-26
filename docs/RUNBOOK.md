@@ -110,11 +110,25 @@ API server is starved, not a manifest problem. Free host memory and restart
 the VM. Check Activity Monitor -> Memory -> Swap Used; heavy swapping starves
 the VM whatever you allocated.
 
-**`input/output error` writing `meta.db`** - reads like disk corruption,
-usually is not. Observed with the VM disk at 7% used while the host was
-paging 6.75 GB. Check memory first, then `docker system df` (a *negative*
-reclaimable size means containerd's accounting is inconsistent). `colima
-delete` is a last resort - it destroys every cached image.
+**`input/output error` writing `meta.db`**, or **`no space left on device`
+writing `~/.colima/default/colima.yaml`** - the *host* disk is full, not the
+VM's.
+
+The VM's disk is a sparse file on the host. When the host fills, that file
+cannot grow, so writes inside the VM fail with I/O errors while the guest's
+own `df` still reports plenty free - it has free blocks it cannot
+materialise. Observed here: guest at 7% used, host full. A *negative*
+reclaimable size in `docker system df` is the same failure showing up in
+containerd's accounting.
+
+Check the host first, not the guest:
+
+    df -h /
+    du -sh ~/.colima ~/Library/Caches ~/Downloads 2>/dev/null | sort -h
+
+`~/.colima` is usually the largest item and never shrinks on its own.
+`colima delete` reclaims all of it; the VM and its cached images are
+re-created on the next `colima start`.
 
 **pip install takes 20+ minutes** - you are building the torch image. `make
 image` is ONNX-only (~380 MB of deps); `make image-torch` is the ~5.7 GB one
