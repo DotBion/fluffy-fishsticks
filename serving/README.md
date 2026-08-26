@@ -30,3 +30,19 @@ drift: change the feature order or window in `contract.py` and both follow.
 | FinBERT | 8001 |
 | training trigger | 9090 |
 | orchestrator | 8081 |
+
+## Image size
+
+The container installs `serving/requirements.txt`, not the training
+requirements. That matters more than it sounds: `train/requirements.txt`
+pulls torch and transformers, which added roughly 2 GB and 25 minutes to an
+ARM build for a service that needs neither.
+
+| build | contents | size |
+| --- | --- | --- |
+| `make image` | ONNX backend only | ~380 MB of deps |
+| `make image-torch` | adds the torch backend | ~5.7 GB of deps |
+
+The ONNX build is the default and is what the Helm charts deploy. Use the
+torch build only when you need `BACKEND=torch` inside a container - locally,
+just run the torch backend directly with `make serve-torch`.

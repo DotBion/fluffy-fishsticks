@@ -62,8 +62,13 @@ preflight: ## Check that the cluster toolchain is installed and running
 # --- container ------------------------------------------------------------
 
 .PHONY: image
-image: preflight ## Build the serving image
+image: preflight ## Build the serving image (ONNX only, ~1 min)
 	docker build -t $(IMAGE):$(TAG) --build-arg MODEL_VERSION=$(TAG) .
+
+.PHONY: image-torch
+image-torch: preflight ## Build with the torch backend too (~2GB, slow on ARM)
+	docker build -t $(IMAGE):$(TAG) --build-arg MODEL_VERSION=$(TAG) \
+	  --build-arg INCLUDE_TORCH=true .
 
 .PHONY: image-push
 image-push: image ## Push to the local kind registry

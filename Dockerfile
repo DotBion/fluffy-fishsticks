@@ -17,17 +17,28 @@ LABEL org.opencontainers.image.title="finpulse-app" \
       org.opencontainers.image.version="${MODEL_VERSION}" \
       org.opencontainers.image.source="https://github.com/DotBion/fluffy-fishsticks"
 
-COPY train/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt gunicorn onnxruntime prometheus_client
+# INCLUDE_TORCH=false builds an ONNX-only image: a few hundred MB and about
+# a minute. Set it true to also get the torch backend, which costs ~2 GB and
+# a great deal of build time on ARM.
+ARG INCLUDE_TORCH=false
+
+COPY serving/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+ && if [ "$INCLUDE_TORCH" = "true" ]; then \
+      pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu; \
+    fi
 
 COPY serving/ ./serving/
 
 # Weights and scaler must come from the same training run: a scaler that does
 # not match the weights produces silently wrong prices rather than an error.
-COPY train/lstm_model.pth ./lstm_model.pth
 COPY train/scaler.pkl ./scaler.pkl
+COPY App/src/lstm_model.onnx ./lstm_model.onnx
+# Only useful with INCLUDE_TORCH=true; harmless otherwise and keeps the
+# image able to switch backends without a rebuild once torch is present.
+COPY train/lstm_model.pth ./lstm_model.pth
 
-ENV BACKEND=torch \
+ENV BACKEND=onnx \
     MODEL_PATH=/app/lstm_model.pth \
     ONNX_MODEL_PATH=/app/lstm_model.onnx \
     SCALER_PATH=/app/scaler.pkl \
