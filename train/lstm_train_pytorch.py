@@ -55,6 +55,9 @@ def create_sequences(data, seq_length):
 
 def load_data(data_path, feature_cols=FEATURE_COLS):
     df = pd.read_csv(data_path).sort_values(by="date")
+    missing = [c for c in feature_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"{data_path} is missing required columns: {missing}")
     scaler = MinMaxScaler()
     data_scaled = scaler.fit_transform(df[feature_cols].values)
     return df, data_scaled, scaler
@@ -113,7 +116,15 @@ def train(data_path=None, feature_cols=FEATURE_COLS, seed=None, verbose=True):
 
 
 if __name__ == "__main__":
-    model, scaler, metrics = train()
+    import sys
+
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    from pipeline.data_source import resolve_training_csv
+
+    data_path, source = resolve_training_csv(local_fallback="data_2018.csv")
+    print(f"Training data source: {source}")
+
+    model, scaler, metrics = train(data_path=data_path)
     torch.save(model.state_dict(), MODEL_PATH)
     # The scaler is part of the model artifact: without it, served predictions
     # come back in normalized [0, 1] space and cannot be mapped to prices.
@@ -121,3 +132,40 @@ if __name__ == "__main__":
     print(f"\nSaved model  -> {MODEL_PATH}")
     print(f"Saved scaler -> {SCALER_PATH}")
     print(f"Final metrics: {metrics}")
+
+    # --- MLflow tracking (optional: skipped cleanly if unavailable) ---
+    if os.getenv("MLFLOW_TRACKING_URI"):
+        try:
+            import mlflow
+            import mlflow.pytorch
+
+            mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT", "finpulse-lstm"))
+            with mlflow.start_run():
+                mlflow.log_params({k: v for k, v in config.items()})
+                mlflow.log_param("features", ",".join(FEATURE_COLS))
+                mlflow.log_param("data_source", source)
+                mlflow.log_metrics(metrics)
+                # Log the raw state_dict and scaler as run artifacts. The
+                # registered pyfunc model serializes to data/model.pt2 (a
+                # traced graph), which the inference server cannot consume -
+                # it calls load_state_dict. The build pipeline pulls these two
+                # files, so what gets served is exactly what was trained.
+                mlflow.log_artifact(SCALER_PATH)
+                mlflow.log_artifact(MODEL_PATH)
+                # MLflow >=3 traces the graph for serialization, so it needs a
+                # representative input; without one log_model raises and the run
+                # is marked FAILED.
+                example = torch.randn(
+                    1, config["seq_length"], len(FEATURE_COLS), dtype=torch.float32
+                )
+                mlflow.pytorch.log_model(
+                    model.cpu(),
+                    name="model",
+                    input_example=example.numpy(),
+                    registered_model_name=os.getenv("MLFLOW_MODEL_NAME", "FinPulseLSTM"),
+                )
+                print(f"Logged run to {os.environ['MLFLOW_TRACKING_URI']}")
+        except Exception as e:
+            print(f"[warn] MLflow logging failed: {e}")
+    else:
+        print("[info] MLFLOW_TRACKING_URI unset — skipping experiment tracking.")

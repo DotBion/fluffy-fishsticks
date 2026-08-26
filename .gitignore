@@ -183,3 +183,7 @@ service-account*.json
 
 # macOS
 .DS_Store
+
+# MLflow local run output
+mlruns/
+mlflow.db
