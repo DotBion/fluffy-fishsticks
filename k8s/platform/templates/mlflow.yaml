@@ -47,10 +47,16 @@ metadata:
   name: mlflow
   namespace: finpulse-platform
 spec:
+  type: {{ .Values.serviceType }}
   selector:
     app: mlflow
   ports:
     - port: 8000
       targetPort: 8000
+      {{- if eq .Values.serviceType "NodePort" }}
+      nodePort: {{ .Values.mlflow.nodePort }}
+      {{- end }}
+  {{- if eq .Values.serviceType "ClusterIP" }}
   externalIPs:
     - {{ .Values.mlflow.externalIP }}
+  {{- end }}

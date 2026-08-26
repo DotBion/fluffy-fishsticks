@@ -1,5 +1,12 @@
+# serviceType: ClusterIP + externalIPs is how the Chameleon deployment exposes
+# these (a floating IP bound to node1). kind has no external IP, so it uses
+# NodePort and kind/kind-config.yaml maps those to localhost.
+serviceType: ClusterIP
+
 minio:
   externalIP: "0.0.0.0"
+  consoleNodePort: 30083
 
 mlflow:
   externalIP: "0.0.0.0"
+  nodePort: 30082

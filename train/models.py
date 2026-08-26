@@ -1,33 +1,21 @@
-"""Model definitions and feature contract shared by training and serving.
+"""Model definition for training.
 
-Kept import-side-effect free on purpose: importing this module must never
-train, read data, or touch the filesystem.
+The feature contract lives in serving/contract.py so training and serving
+cannot drift. This module re-exports it for backwards compatibility and
+defines the network itself.
 """
 
-import torch
-import torch.nn as nn
+import os
+import sys
 
-# Column order is part of the model contract. Training, serving and the
-# saved scaler all depend on this exact sequence.
-FEATURE_COLS = ["open", "high", "low", "close", "volume", "daily_avg_sentiment_score"]
-TARGET_COL = "close"
-TARGET_IDX = FEATURE_COLS.index(TARGET_COL)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-DEFAULTS = {
-    "seq_length": 10,
-    "hidden_dim": 64,
-    "num_layers": 2,
-    "dropout": 0.2,
-}
-
-
-class LSTMModel(nn.Module):
-    def __init__(self, input_size, hidden_dim, num_layers, dropout):
-        super(LSTMModel, self).__init__()
-        self.lstm = nn.LSTM(input_size, hidden_dim, num_layers, dropout=dropout, batch_first=True)
-        self.fc = nn.Linear(hidden_dim, 1)
-
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        out = self.fc(out[:, -1, :])
-        return out.squeeze(-1)
+from serving.backends.torch_backend import LSTMModel  # noqa: F401,E402
+from serving.contract import (  # noqa: F401,E402
+    FEATURE_COLS,
+    INPUT_SIZE,
+    MODEL_DEFAULTS as DEFAULTS,
+    SEQ_LENGTH,
+    TARGET_COL,
+    TARGET_IDX,
+)
