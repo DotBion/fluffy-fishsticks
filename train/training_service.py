@@ -22,13 +22,18 @@ _lock = threading.Lock()
 _state = {"running": False, "last_version": None, "last_error": None, "last_metrics": None}
 
 
-def _register(model, scaler, metrics):
-    """Persist artifacts and log to MLflow. Returns the new registry version."""
+def _register(model, scalers, metrics):
+    """Persist artifacts and log to MLflow. Returns the new registry version.
+
+    `scalers` is the ticker -> MinMaxScaler mapping training produced; it is
+    pickled whole so a multi-ticker model keeps every scaler it was fitted
+    with, and serving.contract.ScalerBundle reads it back unchanged.
+    """
     import torch
     from joblib import dump
 
     torch.save(model.state_dict(), MODEL_PATH)
-    dump(scaler, SCALER_PATH)
+    dump(scalers, SCALER_PATH)
 
     uri = os.getenv("MLFLOW_TRACKING_URI")
     if not uri:
@@ -40,6 +45,7 @@ def _register(model, scaler, metrics):
     mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT", "finpulse-lstm"))
     model_name = os.getenv("MLFLOW_MODEL_NAME", "FinPulseLSTM")
     with mlflow.start_run():
+        mlflow.log_param("tickers", ",".join(sorted(scalers)))
         mlflow.log_metrics(metrics)
         mlflow.log_artifact(SCALER_PATH)
         mlflow.log_artifact(MODEL_PATH)
@@ -63,8 +69,11 @@ def _run():
         from pipeline.data_source import resolve_training_csv
 
         data_path, _ = resolve_training_csv(local_fallback="data_2018.csv")
-        model, scaler, metrics = train(data_path=data_path, verbose=False)
-        version = _register(model, scaler, metrics)
+        tickers = [t for t in os.getenv("TICKERS", "").replace(",", " ").split() if t]
+        model, scalers, metrics = train(
+            data_path=data_path, verbose=False, tickers=tickers or None
+        )
+        version = _register(model, scalers, metrics)
         _state.update(last_version=version, last_metrics=metrics, last_error=None)
     except Exception as e:
         _state["last_error"] = str(e)

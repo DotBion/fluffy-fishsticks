@@ -1,0 +1,14 @@
+# Everything needed to run `make test` and `make lint` from a fresh clone.
+#
+# The tests exercise training, the panel builder and the Flask app together,
+# so they need the training dependencies as well as the serving ones.
+-r train/requirements.txt
+-r requirements.txt
+
+pytest>=8.0
+prometheus_client>=0.19
+onnxruntime>=1.16
+
+# The VADER lexicon itself is a runtime download, not a package:
+#     python -m nltk.downloader vader_lexicon
+# Tests that need it skip cleanly when it is absent.

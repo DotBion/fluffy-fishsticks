@@ -33,6 +33,14 @@ train: ## Train the LSTM and write model + scaler
 ablation: ## Run the seeded sentiment ablation
 	cd train && python ablation.py --seeds 5
 
+.PHONY: panel
+panel: ## Build the multi-ticker training panel (needs the Kaggle tweet corpus)
+	python -m pipeline.build_panel --out train/panel.csv --market-dir train/market
+
+.PHONY: train-panel
+train-panel: ## Train across the panel's tickers
+	cd train && DATA_CSV_PATH=panel.csv python lstm_train_pytorch.py
+
 .PHONY: serve-torch
 serve-torch: ## Serve locally with the PyTorch backend (:8000)
 	BACKEND=torch MODEL_PATH=train/lstm_model.pth SCALER_PATH=train/scaler.pkl \
@@ -105,6 +113,10 @@ smoke: preflight ## Verify the deployed service returns a real prediction
 
 # --- validation (no cluster required) -------------------------------------
 
+.PHONY: test
+test: ## Run the unit and integration tests (no cluster required)
+	python -m pytest tests/ -q
+
 .PHONY: lint
 lint: ## Static-validate charts, workflows and Python
 	@echo "==> helm template"
@@ -116,3 +128,7 @@ lint: ## Static-validate charts, workflows and Python
 	@test $$(grep -rn "^FEATURE_COLS = \[" --include="*.py" . | grep -v '\.git' | wc -l) -eq 1 \
 	  && echo "    ok  one FEATURE_COLS definition" \
 	  || { echo "    FAIL: FEATURE_COLS defined more than once"; exit 1; }
+	@echo "==> sequences cut per ticker"
+	@! git ls-files 'train/*.py' 'pipeline/*.py' | xargs grep -ln "range(len(data) - seq_length)" \
+	  && echo "    ok  no panel-wide sliding window" \
+	  || { echo "    FAIL: a sliding window ignores ticker boundaries"; exit 1; }

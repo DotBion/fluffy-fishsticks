@@ -9,6 +9,10 @@ Accepts RAW (unscaled) OHLCV + sentiment windows and returns a predicted
 next-day close in price units. Scaling and inverse scaling happen here using
 the scaler persisted at training time, so callers never handle normalized
 values.
+
+A multi-ticker model carries one scaler per symbol, so the request may name
+a `ticker`. Single-ticker models ignore the field, which keeps every caller
+written before per-ticker scaling working unchanged.
 """
 
 import os
@@ -47,17 +51,41 @@ def _metric(cls, name, *args, **kwargs):
         return existing
 
 
-PREDICTIONS = _metric(Counter, "lstm_predictions_total", "Prediction requests", ["outcome", "backend"])
+PREDICTIONS = _metric(Counter, "lstm_predictions_total", "Prediction requests", ["outcome", "backend", "ticker"])
 LATENCY = _metric(Histogram, "lstm_inference_seconds", "End-to-end inference latency", ["backend"])
+# Bucket edges span the panel: MSFT traded near $95 in 2018 and AMZN near
+# $1,500, so the single-ticker AAPL range would put every Amazon prediction
+# in the overflow bucket.
 PREDICTED_CLOSE = _metric(
     Histogram,
     "lstm_predicted_close_dollars",
     "Distribution of predicted close prices",
-    buckets=(50, 100, 150, 175, 200, 225, 250, 300, 500),
+    ["ticker"],
+    buckets=(50, 100, 150, 200, 300, 500, 800, 1200, 1800, 3000),
 )
 
 backend = load_backend()
-scaler = load_scaler()
+scalers = load_scaler()
+
+
+def _label(ticker):
+    """Collapse the ticker to a bounded label.
+
+    The value comes straight off the request body, so labelling with it
+    directly would let any caller mint a new Prometheus time series per
+    request. Only tickers the loaded model actually covers get their own
+    series.
+    """
+    if not ticker:
+        return "default"
+    return ticker if ticker in scalers.tickers else "unknown"
+
+
+def _count(outcome, ticker):
+    """Increment the request counter."""
+    PREDICTIONS.labels(
+        outcome=outcome, backend=backend.name, ticker=_label(ticker)
+    ).inc()
 
 
 @app.route("/")
@@ -71,36 +99,58 @@ def health():
         "status": "ok",
         "features": FEATURE_COLS,
         "seq_length": SEQ_LENGTH,
+        "tickers": scalers.tickers,
+        "multi_ticker": scalers.is_multi_ticker,
         **backend.describe(),
     }), 200
 
 
 @app.route("/predict", methods=["POST"])
 def predict():
+    ticker = None
     try:
         payload = request.get_json(force=True)
+        if not isinstance(payload, dict):
+            _count("bad_request", None)
+            return jsonify({"error": "Body must be a JSON object"}), 400
+
+        ticker = (payload.get("ticker") or "").upper() or None
+
         if "input" not in payload:
-            PREDICTIONS.labels(outcome="bad_request", backend=backend.name).inc()
+            _count("bad_request", ticker)
             return jsonify({"error": "Missing 'input' key in JSON payload"}), 400
 
         data = np.array(payload["input"], dtype=np.float32)
         error = validate_window(data)
         if error:
-            PREDICTIONS.labels(outcome="bad_request", backend=backend.name).inc()
+            _count("bad_request", ticker)
             return jsonify({"error": error}), 400
+
+        # An unknown or missing ticker is the caller's mistake, not a server
+        # fault: answer 400 with the list of tickers this model covers rather
+        # than 500 with a stack trace.
+        try:
+            scaler = scalers.for_ticker(ticker)
+        except KeyError as e:
+            _count("bad_request", ticker)
+            return jsonify({"error": str(e.args[0])}), 400
 
         with LATENCY.labels(backend=backend.name).time():
             scaled = scale_window(scaler, data)
             preds = inverse_close(scaler, backend.predict_scaled(scaled))
 
         for p in preds:
-            PREDICTED_CLOSE.observe(float(p))
-        PREDICTIONS.labels(outcome="success", backend=backend.name).inc()
+            PREDICTED_CLOSE.labels(ticker=_label(ticker)).observe(float(p))
+        _count("success", ticker)
 
-        return jsonify({"predictions": preds.tolist(), "backend": backend.name}), 200
+        return jsonify({
+            "predictions": preds.tolist(),
+            "backend": backend.name,
+            "ticker": ticker,
+        }), 200
 
     except Exception as e:
-        PREDICTIONS.labels(outcome="error", backend=backend.name).inc()
+        _count("error", ticker)
         return jsonify({"error": str(e)}), 500
 
 
