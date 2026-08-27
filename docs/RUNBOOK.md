@@ -130,6 +130,36 @@ Check the host first, not the guest:
 `colima delete` reclaims all of it; the VM and its cached images are
 re-created on the next `colima start`.
 
+**`usernet unable to resolve IP for SSH forwarding`**, or colima hanging for
+ten minutes then `error starting vm` - Lima's host-side port forwarder never
+bound its local port, so nothing could reach the guest.
+
+Colima runs Docker in a Linux VM; the CLI on macOS reaches the daemon over an
+SSH-forwarded port that Lima's usernet component sets up. When usernet cannot
+resolve the guest's IP it never binds that port, and every attempt gets
+`Connection refused` - refused rather than timed out, meaning nothing is
+listening host-side at all.
+
+`colima delete` is not sufficient: it removes the VM instance but leaves
+Lima's shared state under `~/.lima`, which the next start inherits. Wipe
+both:
+
+    colima stop -f
+    pkill -f limactl; pkill -f qemu; pkill -f socket_vmnet
+    colima delete -f
+    rm -rf ~/.colima ~/.lima
+    colima start --cpus 4 --memory 8
+
+A clean start takes well under a minute. Switching hypervisor
+(`--vm-type qemu`) does not help - usernet sits above the hypervisor, so VZ
+and QEMU fail identically, which is itself the signal that the hypervisor is
+not the problem.
+
+Before wiping, rule out a VPN or endpoint-security tool (Little Snitch,
+Cloudflare WARP, corporate agents). Anything intercepting local socket
+traffic produces the same signature, and quitting it is faster than
+rebuilding a VM.
+
 **pip install takes 20+ minutes** - you are building the torch image. `make
 image` is ONNX-only (~380 MB of deps); `make image-torch` is the ~5.7 GB one
 and is rarely needed, since `make serve-torch` runs that backend directly.
