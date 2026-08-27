@@ -25,10 +25,26 @@ NEGATIVE_WORDS = (
     "expensive downward falling sold sell low put miss"
 )
 
+# Keys are lower-cased deliberately. VADER lower-cases each token before it
+# looks it up, so an entry stored as "Bullish" can never match: thirty of the
+# sixty-nine terms above are capitalised, and every one of them was inert
+# until this line. The word lists are left exactly as the original notebook
+# wrote them so the intended vocabulary stays readable.
 FINANCIAL_LEXICON = {
-    **{w: 4.0 for w in POSITIVE_WORDS.split()},
-    **{w: -4.0 for w in NEGATIVE_WORDS.split()},
+    **{w.lower(): 4.0 for w in POSITIVE_WORDS.split()},
+    **{w.lower(): -4.0 for w in NEGATIVE_WORDS.split()},
 }
+
+
+def lexicon_available():
+    """True when VADER's own lexicon is already on disk."""
+    import nltk
+
+    try:
+        nltk.data.find("sentiment/vader_lexicon.zip")
+        return True
+    except LookupError:
+        return False
 
 
 def build_analyzer():
@@ -36,10 +52,15 @@ def build_analyzer():
     import nltk
     from nltk.sentiment import SentimentIntensityAnalyzer
 
-    try:
-        nltk.data.find("sentiment/vader_lexicon.zip")
-    except LookupError:
-        nltk.download("vader_lexicon", quiet=True)
+    if not lexicon_available():
+        # The automatic download fails behind a proxy that will not let NLTK
+        # pin the resolved address, and the resulting LookupError says
+        # nothing about how to fix it. Name the one command that does.
+        if not nltk.download("vader_lexicon", quiet=True) or not lexicon_available():
+            raise RuntimeError(
+                "VADER's lexicon is not installed and could not be downloaded. "
+                "Run: python -m nltk.downloader vader_lexicon"
+            )
 
     sia = SentimentIntensityAnalyzer()
     sia.lexicon.update(FINANCIAL_LEXICON)
@@ -97,3 +118,49 @@ def join_market_and_sentiment(market, sentiment):
     return merged[
         ["date", "open", "high", "low", "close", "volume", "daily_avg_sentiment_score"]
     ]
+
+
+def score_panel(tweet_csv, company_tweet_csv, tickers, start, end,
+                analyzer=None, chunksize=500_000):
+    """Daily sentiment for several tickers: {ticker: frame}.
+
+    Two things differ from calling score_tweets once per ticker.
+
+    The corpus is scored before it is joined to the ticker mapping. A tweet
+    naming three companies appears three times after the join, and VADER
+    would otherwise score the identical text three times; over a five-ticker
+    panel that is most of the runtime for no extra information.
+
+    The date filter is applied while reading. Tweet.csv is several million
+    rows, so the window is applied per chunk rather than after loading the
+    whole file into memory.
+    """
+    sia = analyzer or build_analyzer()
+    tickers = [t.upper() for t in tickers]
+    lo, hi = pd.Timestamp(start), pd.Timestamp(end)
+
+    kept = []
+    for chunk in pd.read_csv(tweet_csv, chunksize=chunksize):
+        chunk["date"] = pd.to_datetime(
+            pd.to_datetime(chunk["post_date"], unit="s").dt.date, errors="coerce"
+        )
+        kept.append(chunk.loc[chunk["date"].between(lo, hi), ["tweet_id", "body", "date"]])
+
+    tweets = pd.concat(kept, ignore_index=True).drop_duplicates(subset="tweet_id")
+    if tweets.empty:
+        raise ValueError(f"No tweets between {start} and {end} in {tweet_csv}")
+
+    tweets["score"] = tweets["body"].map(lambda t: sia.polarity_scores(str(t))["compound"])
+
+    company = pd.read_csv(company_tweet_csv)
+    company["ticker_symbol"] = company["ticker_symbol"].str.upper()
+    tagged = tweets.merge(company[company["ticker_symbol"].isin(tickers)],
+                          how="inner", on="tweet_id")
+
+    out = {}
+    for ticker, group in tagged.groupby("ticker_symbol"):
+        out[ticker] = daily_average(group)
+    missing = sorted(set(tickers) - set(out))
+    if missing:
+        print(f"[warn] no tweets in the window for: {missing}")
+    return out

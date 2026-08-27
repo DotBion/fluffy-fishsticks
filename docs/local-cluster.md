@@ -41,10 +41,14 @@ A different failure mode looks like corruption but is usually capacity:
     Error response from daemon: cannot remove container "finpulse-control-plane":
     write /var/lib/containerd/io.containerd.metadata.v1.bolt/meta.db: input/output error
 
-This looks like disk corruption and usually is not. Check host memory first:
-heavy macOS swapping makes writes to the VM's virtual disk time out, and this
-has been observed on a VM disk only 7% full. Restarting colima normally clears
-it.
+This looks like disk corruption and is usually the *host* disk being full.
+The VM's disk is a sparse file on the host; when the host fills, that file
+cannot grow, so writes inside the VM fail while the guest's own `df` still
+reports free space - observed here with the guest at 7% used. The same
+condition later surfaced as `no space left on device` writing
+`~/.colima/default/colima.yaml`, which named the real problem directly.
+
+Check `df -h /` on the Mac before investigating anything inside the VM.
 
 Check `docker system df` too - a *negative* reclaimable size means containerd's
 metadata accounting is inconsistent. Only if the disk is genuinely near full

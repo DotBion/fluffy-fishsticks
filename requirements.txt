@@ -3,3 +3,7 @@ alpha_vantage
 pandas
 minio
 nltk
+scikit-learn
+
+# Optional market-data provider; alpha_vantage stays the default.
+# yfinance

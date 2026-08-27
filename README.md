@@ -369,7 +369,7 @@ ansible-playbook -i inventory.yml argocd/argocd_add_prod.yml
 * FinBERT Endpoint: `http://129.114.27.146:8080/predict`
 * Prometheus:`http://129.114.27.146:9000/`
 * Grafana: `http://129.114.27.146:3001/`
-* To host the endpoints to your floating IP manually, run /train/inference_server_lstm.py (LSTM), or /train/inference_server_finbert.py (Finbert).
+* To host the endpoints manually, run `python -m serving.app` (LSTM — `BACKEND=torch` or `BACKEND=onnx`), or `/train/inference_server_finbert.py` (FinBERT).
 
 ### LSTM:
 

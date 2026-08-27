@@ -33,6 +33,14 @@ train: ## Train the LSTM and write model + scaler
 ablation: ## Run the seeded sentiment ablation
 	cd train && python ablation.py --seeds 5
 
+.PHONY: panel
+panel: ## Build the multi-ticker training panel (needs the Kaggle tweet corpus)
+	python -m pipeline.build_panel --out train/panel.csv --market-dir train/market
+
+.PHONY: train-panel
+train-panel: ## Train across the panel's tickers
+	cd train && DATA_CSV_PATH=panel.csv python lstm_train_pytorch.py
+
 .PHONY: serve-torch
 serve-torch: ## Serve locally with the PyTorch backend (:8000)
 	BACKEND=torch MODEL_PATH=train/lstm_model.pth SCALER_PATH=train/scaler.pkl \
@@ -47,23 +55,32 @@ serve-onnx: ## Serve locally with the ONNX backend (:8000)
 
 .PHONY: preflight
 preflight: ## Check that the cluster toolchain is installed and running
-	@missing=0; \
+	@missing=0; daemon_down=0; \
 	for t in docker kind kubectl helm; do \
 	  if command -v $$t >/dev/null 2>&1; then echo "  ok      $$t"; \
 	  else echo "  MISSING $$t"; missing=1; fi; done; \
 	if command -v docker >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then \
-	  echo "  DOWN    docker daemon — start Docker Desktop, or 'colima start --cpu 4 --memory 8'"; \
-	  missing=1; fi; \
+	  echo "  DOWN    docker daemon"; daemon_down=1; fi; \
 	if [ $$missing -ne 0 ]; then \
-	  echo ""; echo "Install what's missing: brew install kind kubectl helm"; \
-	  echo "See docs/local-cluster.md"; exit 1; fi; \
+	  echo ""; echo "Install the missing tools:  brew install kind kubectl helm"; fi; \
+	if [ $$daemon_down -ne 0 ]; then \
+	  echo ""; echo "Start the Docker daemon:"; \
+	  echo "    colima start --cpus 4 --memory 8      # note --cpus, not --cpu"; \
+	  echo "    (or launch Docker Desktop)"; fi; \
+	if [ $$missing -ne 0 ] || [ $$daemon_down -ne 0 ]; then \
+	  echo ""; echo "See docs/RUNBOOK.md"; exit 1; fi; \
 	echo "  toolchain ready"
 
 # --- container ------------------------------------------------------------
 
 .PHONY: image
-image: preflight ## Build the serving image
+image: preflight ## Build the serving image (ONNX only, ~1 min)
 	docker build -t $(IMAGE):$(TAG) --build-arg MODEL_VERSION=$(TAG) .
+
+.PHONY: image-torch
+image-torch: preflight ## Build with the torch backend too (~2GB, slow on ARM)
+	docker build -t $(IMAGE):$(TAG) --build-arg MODEL_VERSION=$(TAG) \
+	  --build-arg INCLUDE_TORCH=true .
 
 .PHONY: image-push
 image-push: image ## Push to the local kind registry
@@ -96,6 +113,10 @@ smoke: preflight ## Verify the deployed service returns a real prediction
 
 # --- validation (no cluster required) -------------------------------------
 
+.PHONY: test
+test: ## Run the unit and integration tests (no cluster required)
+	python -m pytest tests/ -q
+
 .PHONY: lint
 lint: ## Static-validate charts, workflows and Python
 	@echo "==> helm template"
@@ -107,3 +128,7 @@ lint: ## Static-validate charts, workflows and Python
 	@test $$(grep -rn "^FEATURE_COLS = \[" --include="*.py" . | grep -v '\.git' | wc -l) -eq 1 \
 	  && echo "    ok  one FEATURE_COLS definition" \
 	  || { echo "    FAIL: FEATURE_COLS defined more than once"; exit 1; }
+	@echo "==> sequences cut per ticker"
+	@! git ls-files 'train/*.py' 'pipeline/*.py' | xargs grep -ln "range(len(data) - seq_length)" \
+	  && echo "    ok  no panel-wide sliding window" \
+	  || { echo "    FAIL: a sliding window ignores ticker boundaries"; exit 1; }
